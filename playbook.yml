@@ -1,0 +1,99 @@
+---
+- name: Deploy and set an Apache Web App w/ Ansible. Daniel Escobar Araujo
+  hosts: all
+  become: true
+  vars_files:
+    - vars/default.yml
+
+  tasks:
+    # Instale los paquetes necesarios para que su aplicación web funcione.
+    - name: Install app prerequisites
+      apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
+      loop: [ 'aptitude' ]
+
+    - name: Install app Services (apache, mysql, php)
+      apt: name={{ item }} update_cache=yes state=latest
+      loop: [ 'apache2', 'mysql-server', 'python3-pymysql', 'php', 'php-mysql', 'libapache2-mod-php' ]
+    
+    # Crear una pagina web personal
+    - name: Create directory for the app
+      file:
+        path: "/var/www/{{ http_host }}"
+        state: directory
+        owner: "{{ app_user }}"
+        mode: '0755'
+
+    - name: Clone App from a GitHub repo
+      git:
+        repo: 'https://github.com/DanielEscobar21/easyCrudWLogin.git'
+        dest: /var/www/{{ http_host }}
+        
+    # Cree un nuevo VirtualHost dentro del servidor web y configure un root de documentos específico para ello.
+    - name: Create and set up Apache Virtualhost from apache.conf.j2 file
+      template:
+        src: "files/apache.conf.j2"
+        dest: "/etc/apache2/sites-available/{{ http_conf }}"
+      notify: Reload Apache
+      
+    # Habilite el nuevo VirtualHost.
+    - name: Enable new site virtualhost 
+      shell: /usr/sbin/a2ensite {{ http_conf }}
+      notify: Reload Apache
+
+    - name: Delete the default apache site
+      shell: /usr/sbin/a2dissite 000-default.conf
+      when: disable_default
+      notify: Reload Apache
+
+    # Establezca la contraseña para el usuario administrador de la base de datos.
+    - name: Sets the MySQL root password
+      mysql_user:
+        login_user: root
+        login_password: " "
+        name: root
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        
+   # Elimine las cuentas anónimas y la base de datos de prueba.
+    - name: Removes MySQL anonymous accounts
+      mysql_user:
+        name: ''
+        host_all: yes
+        state: absent
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Removes MySQL default database (test)
+      mysql_db:
+        name: test
+        state: absent
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        
+   # Cargue su esquema de bases de datos en el servidor.     
+    - name: Create MySQL app Data Base on server
+      mysql_db: name=crud state=present login_user=root login_password=" "
+      
+    - name: Load Data Base file on the server
+      copy: src=files/DB.sql dest=/tmp/DB.sql
+      
+    - name: Create tables and add rows to Data Base
+      mysql_db: name=crud state=import target=/tmp/DB.sql login_user=root login_password=" "  
+      
+   # Configure el firewall para que permita el tráfico HTTP en el puerto configurado (por defecto, el 80).
+    - name: "Set firewall for port {{ http_port }}"
+      ufw:
+        rule: allow
+        port: "{{ http_port }}"
+        proto: tcp
+
+  handlers:
+    - name: Reload Apache
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
