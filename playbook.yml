@@ -3,7 +3,7 @@
   hosts: all
   become: true
   vars_files:
-    - vars/default.yml
+    - vars/all.yml
 
   tasks:
     # Instale los paquetes necesarios para que su aplicación web funcione.
